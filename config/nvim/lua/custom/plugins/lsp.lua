@@ -20,6 +20,25 @@ return {
         end,
       })
 
+      -- Auto-detect Python virtual environment
+      local function get_python_path()
+        -- Check for common venv locations
+        local venv_paths = {
+          vim.fn.getcwd() .. "/.venv/bin/python",
+          vim.fn.getcwd() .. "/venv/bin/python",
+          vim.fn.getcwd() .. "/.env/bin/python",
+        }
+        
+        for _, path in ipairs(venv_paths) do
+          if vim.fn.executable(path) == 1 then
+            return path
+          end
+        end
+        
+        -- Fallback to system Python
+        return vim.fn.exepath("python3") or vim.fn.exepath("python")
+      end
+
       -- Configure Pyright LSP
       vim.lsp.config.pyright = {
         cmd = { "pyright-langserver", "--stdio" },
@@ -35,6 +54,7 @@ return {
         },
         settings = {
           python = {
+            pythonPath = get_python_path(),
             analysis = {
               autoSearchPaths = true,
               diagnosticMode = "openFilesOnly",

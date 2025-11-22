@@ -9,7 +9,7 @@ import pyperclip
 
 
 OLLAMA_API = "http://localhost:11434/api/chat"
-MODEL = "command-r7b:latest"  # Change to your preferred model
+MODEL = "qwen2.5-coder:7b"  # Change to your preferred model
 
 
 def call_ollama(prompt, system_prompt, model=MODEL):
