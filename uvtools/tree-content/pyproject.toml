@@ -1,0 +1,13 @@
+[project]
+name = "tree-content"
+version = "0.0.1"
+description = "Export directory tree and file contents. Useful, e.g., for LLM prompting."
+requires-python = ">=3.8"
+
+[project.scripts]
+tree-content = "tree_content.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
