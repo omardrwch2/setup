@@ -1,0 +1,18 @@
+
+[project]
+name = "mtai"
+version = "0.0.1"
+description = "Terminal AI assistant powered by Ollama"
+requires-python = ">=3.8"
+dependencies = [
+    "requests>=2.31.0",
+    "pyperclip>=1.8.2",
+]
+
+[project.scripts]
+mtai = "mtai.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
