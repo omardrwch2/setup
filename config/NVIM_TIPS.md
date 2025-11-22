@@ -99,3 +99,22 @@
 - `Ctrl-\ Ctrl-n` - Exit terminal mode to normal mode
 - `Ctrl-h/j/k/l` - Navigate between windows (works from terminal)
 
+## Yazi (File Manager)
+- `<leader>-` - Open Yazi at current file location
+- `<leader>cw` - Open Yazi at working directory
+
+### Inside Yazi:
+- `j/k` or `↓/↑` - Navigate up/down
+- `h/l` or `←/→` - Go to parent/child directory
+- `Enter` - Open file in Neovim
+- `Space` - Select/deselect file
+- `y` - Yank (copy) selected files
+- `x` - Cut selected files
+- `p` - Paste files
+- `d` - Delete selected files
+- `r` - Rename file
+- `a` - Create new file
+- `A` - Create new directory
+- `/` - Search in current directory
+- `q` or `Esc` - Close Yazi
+
