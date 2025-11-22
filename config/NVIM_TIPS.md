@@ -126,3 +126,21 @@
 - `Ctrl-e` - Close completion menu
 - Completions appear automatically as you type
 
+
+## Git (Gitsigns)
+### Visual indicators in gutter:
+- `│` (green) - Added lines
+- `│` (blue) - Changed lines
+- `_` (red) - Deleted lines
+
+### Navigation:
+- `]c` - Jump to next git change (hunk)
+- `[c` - Jump to previous git change (hunk)
+
+### Actions:
+- `<leader>gp` - Preview diff in floating window
+- `<leader>gb` - Show git blame for current line
+- `<leader>gd` - Open full diff view
+- `<leader>gr` - Reset/undo current change
+- `<leader>gR` - Reset all changes in file
+
