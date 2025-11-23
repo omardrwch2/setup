@@ -14,7 +14,7 @@ fi
 
 # Install essential tools
 echo "📦 Installing essential tools..."
-brew install neovim ripgrep pyright yazi fd
+brew install neovim ripgrep pyright yazi fd mosh
 
 # Install uv if not installed
 if ! command -v uv &> /dev/null; then

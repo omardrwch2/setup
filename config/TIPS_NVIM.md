@@ -10,7 +10,7 @@
 - `v` - Character-wise visual mode
 - `V` - Line-wise visual mode
 - `Ctrl-v` - Block visual mode
-- `:w` - Save file
+- `:w` or `<leader>w` - Save file
 - `:q` - Quit
 - `:wq` or `ZZ` - Save and quit
 - `:q!` or `ZQ` - Quit without saving

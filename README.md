@@ -18,6 +18,8 @@ chmod +x install.sh
 - pyright - Python LSP
 - yazi - Terminal file manager
 - fd - Fast file finder
+- mosh - Alternative to ssh
+
 
 **uv tools:**
 - ruff - Python linter/formatter
@@ -35,7 +37,7 @@ chmod +x install.sh
 
 ### Install tools
 ```bash
-brew install neovim ripgrep pyright yazi fd
+brew install neovim ripgrep pyright yazi fd mosh
 ```
 
 ### Install uv and tools

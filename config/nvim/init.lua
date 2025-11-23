@@ -72,3 +72,9 @@ vim.keymap.set("n", "<leader>q", "<C-w>q", { desc = "Close window" })
 -- Easier terminal escape (double Esc)
 vim.keymap.set("t", "<Esc><Esc>", "<C-\\><C-n>", { desc = "Exit terminal mode" })
 
+-- No swap files
+vim.opt.swapfile = false
+
+-- Quick save
+vim.keymap.set("n", "<leader>w", ":w<CR>", { desc = "Save file" })
+
