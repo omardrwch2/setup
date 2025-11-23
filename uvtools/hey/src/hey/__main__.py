@@ -39,12 +39,12 @@ def get_folder_context(folder_path):
     """Get folder contents using tree-content."""
     try:
         result = subprocess.run(
-            ["tree-content", folder_path, "/tmp/mtai-context.txt"],
+            ["tree-content", folder_path, "/tmp/hey-context.txt"],
             capture_output=True,
             text=True,
             check=True
         )
-        with open("/tmp/mtai-context.txt", "r") as f:
+        with open("/tmp/hey-context.txt", "r") as f:
             return f.read()
     except subprocess.CalledProcessError:
         print("Error: tree-content command failed", file=sys.stderr)
@@ -70,10 +70,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  mtai list all txt files in current directory
-  mtai -d find files modified in last 24 hours
-  mtai -q what does grep do?
-  mtai -c ~/.config/nvim how to enable line numbers?
+  hey list all txt files in current directory
+  hey -d find files modified in last 24 hours
+  hey -q what does grep do?
+  hey -c ~/.config/nvim how to enable line numbers?
         """
     )
     
