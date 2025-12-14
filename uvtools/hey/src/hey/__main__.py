@@ -16,9 +16,6 @@ def call_ollama(prompt, system_prompt, model=MODEL):
     payload = {
         "model": model,
         "messages": [
-            # {"role": "system", "content": system_prompt},
-            # {"role": "user", "content": prompt}
-            # NOTE(omar): it seems to work better if the system_prompt is given as a user turn.
             {"role": "user", "content": f"{system_prompt}\n\n{prompt}"}
         ],
         "stream": False
@@ -68,6 +65,14 @@ def copy_to_clipboard(text):
     except Exception:
         return False
 
+
+def get_stdin_content():
+    """Read content from stdin if available."""
+    if not sys.stdin.isatty():
+        return sys.stdin.read()
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Terminal AI assistant powered by Ollama",
@@ -78,6 +83,7 @@ Examples:
   hey -d find files modified in last 24 hours
   hey -q what does grep do?
   hey -c ~/.config/nvim how to enable line numbers?
+  cat file.txt | hey "summarize this"
         """
     )
     
@@ -113,11 +119,18 @@ Examples:
     
     args = parser.parse_args()
     
-    if not args.prompt:
+    # Check for piped input
+    stdin_content = get_stdin_content()
+    
+    if not args.prompt and not stdin_content:
         parser.print_help()
         sys.exit(1)
     
-    prompt = " ".join(args.prompt)
+    prompt = " ".join(args.prompt) if args.prompt else ""
+    
+    # If there's stdin content, prepend it to the prompt
+    if stdin_content:
+        prompt = f"Here is the input:\n\n```\n{stdin_content}\n```\n\n{prompt}"
 
     # Use the model from args
     model = args.model
@@ -139,21 +152,21 @@ Examples:
         
         system_prompt = f"""You are a helpful assistant with access to the user's files and configuration.
 
-    Below is the complete directory structure and file contents from: {path}
+Below is the complete directory structure and file contents from: {path}
 
-    <folder_context>
-    {context}
-    </folder_context>
+<folder_context>
+{context}
+</folder_context>
 
-    The user will ask you questions about these files. Answer based on the actual content provided above. Be specific and reference the actual files and code when relevant."""
+The user will ask you questions about these files. Answer based on the actual content provided above. Be specific and reference the actual files and code when relevant."""
 
         response = call_ollama(prompt, system_prompt, model)
         print(response)
         return
 
-    # Handle question mode
-    if args.question:
-        system_prompt = """You are a helpful terminal/bash expert. Answer questions about terminal commands, shell scripting, and command-line tools. Be concise and clear."""
+    # Handle question mode (or when stdin is provided)
+    if args.question or stdin_content:
+        system_prompt = """You are a helpful terminal/bash/coding/python expert. Answer questions about terminal commands, shell scripting, coding, python and command-line tools. Be concise and clear."""
         
         response = call_ollama(prompt, system_prompt, model)
         print(response)
