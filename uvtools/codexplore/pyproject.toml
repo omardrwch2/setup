@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "codexplore"
+version = "0.1.0"
+description = "A private, local codebase profiling explorer"
+requires-python = ">=3.9"
+dependencies = [
+    "click>=8.0",
+    "py-spy>=0.4",
+    "starlette>=0.27",
+    "uvicorn>=0.23",
+    "jinja2>=3.0",
+]
+
+[project.scripts]
+codexplore = "codexplore.cli:main"
+
+[tool.hatch.build.targets.sdist]
+include = ["src/codexplore"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/codexplore"]
+sources = ["src"]
