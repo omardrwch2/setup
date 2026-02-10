@@ -1,0 +1,17 @@
+[project]
+name = "httpmonitor"
+version = "0.3.0"
+description = "Monitor HTTP/TCP connections of a process by PID"
+requires-python = ">=3.10"
+dependencies = [
+    "psutil>=5.9",
+    "rich>=13.0",
+    "plotext>=5.2",
+]
+
+[project.scripts]
+httpmonitor = "httpmonitor.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
