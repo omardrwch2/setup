@@ -3,7 +3,7 @@
 import click
 import sys
 
-from codexplore.runner import run_profile
+from codexplore.runner import exec_profile, run_profile
 from codexplore.server import serve_analysis
 
 
@@ -43,6 +43,39 @@ def run_cmd(script, script_args, python, rate, subprocesses):
         script=script,
         script_args=list(script_args),
         python=python,
+        rate=rate,
+        subprocesses=subprocesses,
+    )
+    if run_id:
+        click.echo(f"\n✅ Profile saved. Run ID: {click.style(run_id, fg='green', bold=True)}")
+        click.echo(f"   Analyze with: codexplore analyze {run_id}")
+    else:
+        click.echo("\n❌ Profiling failed.", err=True)
+        sys.exit(1)
+
+
+@main.command("exec", context_settings={"ignore_unknown_options": True})
+@click.argument("command", nargs=-1, type=click.UNPROCESSED, required=True)
+@click.option(
+    "--rate",
+    default=100,
+    type=int,
+    help="Sampling rate in Hz (default: 100).",
+)
+@click.option(
+    "--subprocesses",
+    is_flag=True,
+    default=False,
+    help="Profile subprocesses as well.",
+)
+def exec_cmd(command, rate, subprocesses):
+    """Profile any command (must be a Python process).
+
+    Usage: codexplore exec -- harbor run <task>
+           codexplore exec --rate 200 -- uvicorn app:main
+    """
+    run_id = exec_profile(
+        command=list(command),
         rate=rate,
         subprocesses=subprocesses,
     )
@@ -99,7 +132,8 @@ def list_cmd(base_dir):
         return
     click.echo(f"Found {len(runs)} run(s):\n")
     for run in runs:
-        click.echo(f"  {click.style(run['id'], fg='cyan')}  {run['timestamp']}  {run['script']}")
+        label = run.get("command") or run.get("script", "unknown")
+        click.echo(f"  {click.style(run['id'], fg='cyan')}  {run['timestamp']}  {label}")
 
 
 if __name__ == "__main__":

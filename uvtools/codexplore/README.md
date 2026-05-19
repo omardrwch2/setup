@@ -31,6 +31,22 @@ This will:
 - `--rate N` — Sampling rate in Hz (default: 100)
 - `--subprocesses` — Also profile child processes
 
+### Profile any command
+
+For CLI tools installed as entry points (e.g. `harbor`, `uvicorn`, `flask`), use `exec`:
+
+```bash
+codexplore exec -- harbor run <task>
+codexplore exec --subprocesses -- harbor run <task>
+codexplore exec --rate 200 -- uvicorn app:main
+```
+
+The command must be a Python process (py-spy attaches to the Python interpreter inside it). This works with any `console_scripts` entry point installed via pip/uv.
+
+**Options:**
+- `--rate N` — Sampling rate in Hz (default: 100)
+- `--subprocesses` — Also profile child processes
+
 ### Analyze a run
 
 ```bash

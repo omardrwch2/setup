@@ -40,7 +40,8 @@ def list_runs(codexplorer_dir: Path) -> list[dict]:
                     {
                         "id": entry.name,
                         "timestamp": meta.get("timestamp", "unknown"),
-                        "script": meta.get("script", "unknown"),
+                        "script": meta.get("script"),
+                        "command": meta.get("command"),
                         "path": str(entry),
                     }
                 )
