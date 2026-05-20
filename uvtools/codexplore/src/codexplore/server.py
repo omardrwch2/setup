@@ -18,6 +18,20 @@ from codexplore.utils import get_codexplorer_dir, get_run_dir
 STATIC_DIR = Path(__file__).parent / "web" / "static"
 
 
+def _build_source_allowlist(profile_data: dict) -> set[Path]:
+    """Build a set of allowed parent directories from the profile's shared frames.
+
+    Only files under one of these directories can be served by the source API.
+    """
+    dirs: set[Path] = set()
+    for frame in profile_data.get("shared", {}).get("frames", []):
+        fp = frame.get("file", "")
+        if fp:
+            resolved = Path(fp).resolve().parent
+            dirs.add(resolved)
+    return dirs
+
+
 def serve_analysis(
     run_id: str,
     port: int = 8125,
@@ -45,6 +59,10 @@ def serve_analysis(
     if not profile_file.exists():
         print(f"Error: No profile data found for run '{run_id}'", file=sys.stderr)
         sys.exit(1)
+
+    with open(profile_file) as f:
+        profile_for_allowlist = json.load(f)
+    allowed_dirs = _build_source_allowlist(profile_for_allowlist)
 
     # ── API Routes ──────────────────────────────────────────────
 
@@ -78,12 +96,22 @@ def serve_analysis(
         if not file_path:
             return JSONResponse({"error": "Missing 'path' parameter"}, status_code=400)
 
-        source_path = Path(file_path)
+        source_path = Path(file_path).resolve()
 
         # Security: only allow reading .py files
         if source_path.suffix not in (".py", ".pyx", ".pxd"):
             return JSONResponse(
                 {"error": "Only Python source files can be viewed"},
+                status_code=403,
+            )
+
+        # Security: only allow files under directories that appear in the profile
+        if allowed_dirs and not any(
+            source_path.parent == d or d in source_path.parents
+            for d in allowed_dirs
+        ):
+            return JSONResponse(
+                {"error": "File is outside the profiled codebase"},
                 status_code=403,
             )
 
@@ -154,8 +182,17 @@ def serve_analysis(
 
     click.echo(f"🔬 codexplore — Profile Explorer")
     click.echo(f"   Run:  {click.style(run_id, fg='cyan')}")
-    click.echo(f"   Script: {meta.get('script', 'unknown')}")
+    click.echo(f"   Target: {meta.get('command') or meta.get('script', 'unknown')}")
     click.echo(f"   URL: {click.style(f'http://{host}:{port}', fg='green', bold=True)}")
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        click.echo(
+            click.style(
+                f"   ⚠️  WARNING: Binding to {host} exposes the source viewer to the network.\n"
+                f"   The source API can serve any Python file that appears in the profile.\n"
+                f"   Use --host 127.0.0.1 (default) to restrict access to localhost.",
+                fg="yellow",
+            )
+        )
     click.echo(f"   Press Ctrl+C to stop.\n")
 
     uvicorn.run(app, host=host, port=port, log_level="warning")

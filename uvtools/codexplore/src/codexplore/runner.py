@@ -109,11 +109,15 @@ def run_profile(
         result = subprocess.run(
             cmd,
             cwd=str(script_path.parent),
-            # Pass through stdin/stdout/stderr so the profiled script can interact
             stdin=sys.stdin,
             stdout=sys.stdout,
             stderr=sys.stderr,
         )
+        if result.returncode != 0:
+            print(
+                f"\n⚠️  Process exited with code {result.returncode}. Profile may be incomplete.",
+                file=sys.stderr,
+            )
     except PermissionError:
         print(
             "\n❌ Permission denied. py-spy needs permissions to profile processes.\n"
@@ -239,6 +243,11 @@ def exec_profile(
             stdout=sys.stdout,
             stderr=sys.stderr,
         )
+        if result.returncode != 0:
+            print(
+                f"\n⚠️  Process exited with code {result.returncode}. Profile may be incomplete.",
+                file=sys.stderr,
+            )
     except PermissionError:
         print(
             "\n❌ Permission denied. py-spy needs permissions to profile processes.\n"

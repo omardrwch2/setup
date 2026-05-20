@@ -6,13 +6,12 @@ build-backend = "hatchling.build"
 name = "codexplore"
 version = "0.1.0"
 description = "A private, local codebase profiling explorer"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "click>=8.0",
     "py-spy>=0.4",
     "starlette>=0.27",
     "uvicorn>=0.23",
-    "jinja2>=3.0",
 ]
 
 [project.scripts]

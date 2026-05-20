@@ -16,7 +16,6 @@
   --font-sans: 'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
   --radius: 6px; --transition: 150ms ease;
 }
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 html, body { height: 100%; }
 body { font-family: var(--font-sans); background: var(--bg-primary); color: var(--text-primary); overflow: hidden; }
 #app { display: grid; grid-template-rows: auto 1fr; height: 100vh; }
@@ -44,13 +43,13 @@ body { font-family: var(--font-sans); background: var(--bg-primary); color: var(
 .v-splitter:hover, .v-splitter.active { background: var(--accent-dim); }
 .v-splitter.visible { display: block; }
 #flame-container { width: 100%; height: 100%; overflow-x: hidden; overflow-y: auto; position: relative; }
-#flame-canvas { display: block; position: absolute; top: 0; left: 0; }
+#flame-canvas { display: block; position: relative; }
 #flame-tooltip { position: fixed; background: var(--bg-tertiary); border: 1px solid var(--border-bright); border-radius: var(--radius); padding: 8px 12px; font-size: 12px; font-family: var(--font-mono); pointer-events: none; z-index: 100; display: none; max-width: 500px; box-shadow: 0 4px 20px rgba(0,0,0,0.4); }
 #flame-tooltip .fn-name { color: var(--accent); font-weight: 600; }
 #flame-tooltip .fn-file { color: var(--text-muted); font-size: 11px; margin-top: 2px; }
 #flame-tooltip .fn-time { color: var(--warm); margin-top: 4px; }
 #flame-tooltip .fn-hint { color: var(--text-muted); font-size: 10px; margin-top: 4px; }
-#flame-zoom-indicator { position: absolute; top: 6px; left: 8px; display: flex; align-items: center; gap: 6px; z-index: 10; flex-wrap: wrap; }
+#flame-zoom-indicator { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; overflow: hidden; }
 #flame-zoom-indicator .bc { font-size: 11px; font-family: var(--font-mono); color: var(--text-muted); background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius); padding: 3px 8px; cursor: pointer; }
 #flame-zoom-indicator .bc:hover { color: var(--text-primary); border-color: var(--border-bright); }
 #flame-zoom-indicator .bc.root { color: var(--accent); }
@@ -64,7 +63,7 @@ body { font-family: var(--font-sans); background: var(--bg-primary); color: var(
 .fn-table th.sorted.asc::after { content: ' ▲'; }
 .fn-table td { padding: 6px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fn-table tr { transition: background var(--transition); }
-.fn-table tbody tr:hover { background: var(--bg-hover); cursor: pointer; }
+.fn-table tbody tr:hover, .fn-table tbody tr.hl { background: var(--bg-hover); cursor: pointer; }
 .fn-table .col-self, .fn-table .col-total { text-align: right; font-variant-numeric: tabular-nums; }
 .fn-table .col-name { max-width: 350px; color: var(--text-primary); }
 .fn-table .col-file { max-width: 250px; color: var(--text-muted); font-size: 11px; }
@@ -104,6 +103,9 @@ body { font-family: var(--font-sans); background: var(--bg-primary); color: var(
     <div class="controls">
       <label>Thread</label>
       <select id="thread-select"></select>
+      <button class="toggle-btn" id="toggle-view">Timeline</button>
+      <button class="toggle-btn" id="toggle-swimlane" style="display:none">Tasks</button>
+      <button class="toggle-btn" id="toggle-inverted">Bottom-up</button>
       <button class="toggle-btn active" id="toggle-internals">Hide internals</button>
     </div>
     <div class="meta" id="header-meta"></div>
@@ -113,13 +115,13 @@ body { font-family: var(--font-sans); background: var(--bg-primary); color: var(
       <div class="panel" id="panel-flame" style="flex:1">
         <div class="panel-header">
           <div class="tab">Flame Graph</div>
+          <div id="flame-zoom-indicator"></div>
           <div class="spacer"></div>
-          <input type="text" class="search-input" id="flame-search" placeholder="Filter functions…">
+          <input type="text" class="search-input" id="flame-search" placeholder="Filter functions / paths…">
           <div class="info" id="flame-info"></div>
         </div>
         <div class="panel-body" id="flame-body">
           <div id="flame-container">
-            <div id="flame-zoom-indicator"></div>
             <canvas id="flame-canvas"></canvas>
           </div>
         </div>
@@ -165,13 +167,30 @@ let profileData,metaData,currentProfileIndex=0,processedFrames=[],flameRoot,
 
 let vpZoom=1, vpPanX=0;
 
+// View mode: "flame" (merged), "timeline" (chronological), "inverted" (bottom-up)
+let viewMode="flame";
+
 // Cached flattened rects - only rebuilt when tree/zoom-node changes
 let cachedRects=null, cachedMaxD=0;
+
+// Cross-highlight state (function name highlighted from table hover)
+let highlightName="";
+
+// Zoom animation state
+let animating=false, animFrom={zoom:1,panX:0}, animTo={zoom:1,panX:0}, animStart=0, animDuration=180;
+
+// Timeline state
+let tlSamples=[], tlFrames=[], tlMaxDepth=0;
+
+// Swimlane state (task-grouped timeline)
+let swimlaneMode=false;
+let taskLanes=[]; // [{name, samples: [{si, stack}]}] sorted by first appearance
+let LANE_H=24, LANE_GAP=2;
 
 // rAF throttle for flame rendering
 let flameRafId=0;
 function scheduleFlameRender(){
-  if(!flameRafId) flameRafId=requestAnimationFrame(()=>{flameRafId=0;renderFlameImmediate()});
+  if(!flameRafId) flameRafId=requestAnimationFrame(()=>{flameRafId=0;renderDispatch()});
 }
 
 // DOM cache - populated once on init
@@ -193,6 +212,9 @@ function initDomCache(){
     headerMeta:document.getElementById("header-meta"),
     threadSelect:document.getElementById("thread-select"),
     toggleBtn:document.getElementById("toggle-internals"),
+    toggleView:document.getElementById("toggle-view"),
+    toggleSwimlane:document.getElementById("toggle-swimlane"),
+    toggleInverted:document.getElementById("toggle-inverted"),
     sourcePanel:document.getElementById("source-panel"),
     vSplitter:document.getElementById("v-splitter"),
     sourceCode:document.getElementById("source-code"),
@@ -202,6 +224,7 @@ function initDomCache(){
     leftPanels:document.getElementById("left-panels"),
     mainWrapper:document.getElementById("main-wrapper"),
     hSplitter:document.getElementById("h-splitter"),
+    flameTab:document.querySelector("#panel-flame .tab"),
   };
 }
 
@@ -224,11 +247,31 @@ function fmtTime(v){
   return(v*1000).toFixed(1)+"ms";
 }
 
+// Stable color from function name (for timeline mode)
+function nameHue(name){
+  let h=0;for(let i=0;i<name.length;i++){h=((h<<5)-h+name.charCodeAt(i))|0}
+  return((h%360)+360)%360;
+}
+function nameColor(name){
+  const h=nameHue(name);
+  return"hsl("+h+",55%,45%)";
+}
+
 // --- Data loading ---
 async function loadData(){
-  const[mr,pr]=await Promise.all([fetch("/api/meta"),fetch("/api/profile")]);
-  metaData=await mr.json();profileData=await pr.json();
-  $.headerMeta.textContent=(metaData.script||"unknown")+" \u00b7 "+(metaData.timestamp||"");
+  try{
+    const[mr,pr]=await Promise.all([fetch("/api/meta"),fetch("/api/profile")]);
+    if(!mr.ok)throw new Error("Failed to load metadata (HTTP "+mr.status+")");
+    if(!pr.ok)throw new Error("Failed to load profile (HTTP "+pr.status+")");
+    metaData=await mr.json();profileData=await pr.json();
+  }catch(err){
+    const el=document.getElementById("loading");
+    el.innerHTML='<div style="color:#ff6b6b;font-family:var(--font-mono);font-size:14px;text-align:center;padding:20px"><div style="margin-bottom:8px">Failed to load profile data</div><div style="font-size:12px;color:#8890a8">'+esc(err.message)+'</div></div>';
+    return;
+  }
+  const target=metaData.command||metaData.script||"unknown";
+  $.headerMeta.textContent=target+" \u00b7 "+(metaData.timestamp||"");
+  document.title="codexplore \u00b7 "+target;
   populateThreadSelect();processProfile();resetZoom();renderAll();
   document.getElementById("loading").style.display="none";
   document.getElementById("app").style.display="";
@@ -247,18 +290,22 @@ function processProfile(){
   const fs=new Map();
   for(let si=0;si<samples.length;si++){
     const stk=samples[si],w=weights[si],seen=new Set();
+    let lastVisIdx=-1;
     for(let fi=0;fi<stk.length;fi++){
       const idx=stk[fi],f=sf[idx]||{},nm=f.name||"<frame "+idx+">",fl=f.file||"",dn=displayName(nm,fl);
       if(skip(nm,fl))continue;
       if(!fs.has(idx))fs.set(idx,{index:idx,self:0,total:0,name:dn,file:fl,line:f.line||0});
       if(!seen.has(idx)){fs.get(idx).total+=w;seen.add(idx)}
-      if(fi===stk.length-1)fs.get(idx).self+=w;
+      lastVisIdx=idx;
     }
+    if(lastVisIdx>=0)fs.get(lastVisIdx).self+=w;
   }
   processedFrames=Array.from(fs.values());
   flameRoot=buildTree(samples,weights,sf);
   cachedRects=null;
+  buildTimelineData(samples,weights,sf);
 }
+
 function buildTree(samples,weights,sf){
   const root={name:"(root)",children:[],value:0,self:0,file:"",line:0,frameIndex:-1};
   for(let si=0;si<samples.length;si++){
@@ -268,12 +315,75 @@ function buildTree(samples,weights,sf){
       if(skip(nm,fl))continue;
       let ch=node.children.find(c=>c.frameIndex===idx);
       if(!ch){ch={frameIndex:idx,name:dn,file:fl,line:fr.line||0,children:[],value:0,self:0};node.children.push(ch)}
-      ch.value+=w;if(fi===stk.length-1)ch.self+=w;node=ch;
+      ch.value+=w;node=ch;
     }
+    if(node!==root)node.self+=w;
   }
-  // Pre-sort children once so render never sorts
   (function presort(nd){nd.children.sort((a,b)=>b.value-a.value);nd.children.forEach(presort)})(root);
   return root;
+}
+
+function buildInvertedTree(samples,weights,sf){
+  const root={name:"(root)",children:[],value:0,self:0,file:"",line:0,frameIndex:-1};
+  for(let si=0;si<samples.length;si++){
+    const stk=samples[si],w=weights[si];let node=root;root.value+=w;
+    let selfDone=false;
+    for(let fi=stk.length-1;fi>=0;fi--){
+      const idx=stk[fi],fr=sf[idx]||{},nm=fr.name||"<frame "+idx+">",fl=fr.file||"",dn=displayName(nm,fl);
+      if(skip(nm,fl))continue;
+      let ch=node.children.find(c=>c.frameIndex===idx);
+      if(!ch){ch={frameIndex:idx,name:dn,file:fl,line:fr.line||0,children:[],value:0,self:0};node.children.push(ch)}
+      ch.value+=w;if(!selfDone){ch.self+=w;selfDone=true}node=ch;
+    }
+  }
+  (function presort(nd){nd.children.sort((a,b)=>b.value-a.value);nd.children.forEach(presort)})(root);
+  return root;
+}
+
+function buildTimelineData(samples,weights,sf){
+  tlSamples=[];tlMaxDepth=0;tlFrames=sf;
+  const taskMap=new Map();
+  const TASK_STEP_RE=/^Task\.__step|^Task\.\w*step|^TaskGroup\._spawn|^_task_step/;
+  const INTERNAL_PATH_RE=/asyncio[\\/]|_selector_events|_unix_events|selectors\.py|threading\.py/;
+
+  for(let si=0;si<samples.length;si++){
+    const stk=samples[si],filtered=[];
+    for(let fi=0;fi<stk.length;fi++){
+      const idx=stk[fi],fr=sf[idx]||{},nm=fr.name||"<frame "+idx+">",fl=fr.file||"";
+      if(skip(nm,fl))continue;
+      filtered.push({idx,name:displayName(nm,fl),file:fl,line:fr.line||0,rawName:nm});
+    }
+
+    // Detect task identity: find Task.__step and take the frame AFTER it (the coroutine)
+    let taskName=null;
+    for(let k=0;k<filtered.length-1;k++){
+      if(TASK_STEP_RE.test(filtered[k].rawName)){
+        taskName=filtered[k+1].name;
+        break;
+      }
+    }
+
+    // Fallback: find the first frame that looks like user code (not stdlib/asyncio internals)
+    if(!taskName){
+      for(let k=filtered.length-1;k>=0;k--){
+        const f=filtered[k];
+        if(f.file&&!INTERNAL_PATH_RE.test(f.file)&&!f.file.includes("site-packages")){
+          taskName=f.name;break;
+        }
+      }
+    }
+    if(!taskName&&filtered.length>0)taskName=filtered[filtered.length-1].name;
+    if(!taskName)taskName="(idle)";
+
+    tlSamples.push(filtered);
+    if(filtered.length>tlMaxDepth)tlMaxDepth=filtered.length;
+
+    if(!taskMap.has(taskName))taskMap.set(taskName,{name:taskName,samples:[],firstSeen:si});
+    taskMap.get(taskName).samples.push({si,stack:filtered});
+  }
+
+  // Sort lanes by total samples (heaviest first), with ties broken by first appearance
+  taskLanes=Array.from(taskMap.values()).sort((a,b)=>b.samples.length-a.samples.length||a.firstSeen-b.firstSeen);
 }
 
 // --- Flatten tree into rects (cached) ---
@@ -289,12 +399,44 @@ function rebuildRects(){
 }
 
 // --- Zoom ---
-function resetZoom(){flameZoomStack=[];flameViewRoot=flameRoot;vpZoom=1;vpPanX=0;cachedRects=null;updateBC()}
-function zoomInto(n){if(!n||n===flameViewRoot)return;flameZoomStack.push(n);flameViewRoot=n;vpZoom=1;vpPanX=0;cachedRects=null;updateBC();renderFlame()}
+function resetZoom(){flameZoomStack=[];flameViewRoot=flameRoot;vpZoom=1;vpPanX=0;cachedRects=null;animating=false;updateBC()}
+function zoomInto(n){
+  if(!n||n===flameViewRoot)return;
+  // Calculate where target node currently sits on screen for animated transition
+  if(cachedRects){
+    const cW=$.flameContainer.clientWidth,logW=cW*vpZoom;
+    const rc=cachedRects.find(r=>r.node===n);
+    if(rc){
+      const targetZoom=1/rc.w;
+      const targetPanX=-rc.x*cW*targetZoom;
+      animFrom={zoom:vpZoom,panX:vpPanX};
+      animTo={zoom:Math.min(targetZoom,200),panX:targetPanX};
+      animStart=performance.now();animating=true;
+      animateZoom(()=>{
+        flameZoomStack.push(n);flameViewRoot=n;vpZoom=1;vpPanX=0;cachedRects=null;updateBC();renderFlame();
+      });
+      return;
+    }
+  }
+  flameZoomStack.push(n);flameViewRoot=n;vpZoom=1;vpPanX=0;cachedRects=null;updateBC();renderFlame();
+}
+function animateZoom(onDone){
+  const step=()=>{
+    const t=Math.min((performance.now()-animStart)/animDuration,1);
+    const ease=1-Math.pow(1-t,3);
+    vpZoom=animFrom.zoom+(animTo.zoom-animFrom.zoom)*ease;
+    vpPanX=animFrom.panX+(animTo.panX-animFrom.panX)*ease;
+    clampPan($.flameContainer.clientWidth);
+    renderDispatch();
+    if(t<1)requestAnimationFrame(step);
+    else{animating=false;if(onDone)onDone()}
+  };
+  requestAnimationFrame(step);
+}
 function zoomTo(lv){
   if(lv<0)resetZoom();
   else{flameZoomStack=flameZoomStack.slice(0,lv+1);flameViewRoot=flameZoomStack[flameZoomStack.length-1]||flameRoot}
-  vpZoom=1;vpPanX=0;cachedRects=null;updateBC();renderFlame();
+  vpZoom=1;vpPanX=0;cachedRects=null;animating=false;updateBC();renderFlame();
 }
 function updateBC(){
   const el=$.flameZoomInd;if(!flameZoomStack.length){el.innerHTML="";return}
@@ -306,6 +448,14 @@ function updateBC(){
 
 function renderAll(){renderFlame();renderTable()}
 function renderFlame(){scheduleFlameRender()}
+
+function renderDispatch(){
+  if(viewMode==="timeline"){
+    if(swimlaneMode)renderSwimlanesImmediate();
+    else renderTimelineImmediate();
+  }
+  else renderFlameImmediate();
+}
 
 // --- Text truncation with cache + binary search ---
 const ROW_H=20,FONT_SZ=11;
@@ -326,31 +476,45 @@ function truncFast(t,mw){
 }
 
 // --- Flame rendering (called via rAF) ---
-let lastCanvasW=0,lastCanvasH=0;
 function renderFlameImmediate(){
   const container=$.flameContainer,canvas=$.flameCanvas,ctx=canvas.getContext("2d"),dpr=devicePixelRatio||1;
   if(!cachedRects)rebuildRects();
   const rects=cachedRects,maxD=cachedMaxD;
   const cW=container.clientWidth,cH=container.clientHeight;
   const ch=Math.max((maxD+2)*ROW_H,cH);
-  // Resize canvas only when needed (expensive: clears buffer)
   const needW=Math.round(cW*dpr),needH=Math.round(ch*dpr);
   if(canvas.width!==needW||canvas.height!==needH){canvas.width=needW;canvas.height=needH;canvas.style.width=cW+"px";canvas.style.height=ch+"px"}
   ctx.setTransform(dpr,0,0,dpr,0,0);
   ctx.fillStyle="#0c0e14";ctx.fillRect(0,0,cW,ch);
+
+  // Depth stripes
+  for(let d=0;d<=maxD;d++){
+    if(d%2===0)continue;
+    ctx.fillStyle="rgba(255,255,255,0.015)";
+    ctx.fillRect(0,(d-1)*ROW_H,cW,ROW_H);
+  }
+
   const filt=searchTerm.toLowerCase(),hasFilt=filt.length>0;
+  const hasHL=highlightName.length>0;
   const logW=cW*vpZoom;
   ctx.font=FONT_SZ+"px JetBrains Mono,monospace";
   ctx.textBaseline="alphabetic";
 
+  let matchedSamples=0;
   for(let i=0,len=rects.length;i<len;i++){
     const r=rects[i],px=r.x*logW+vpPanX,pw=r.w*logW,py=(r.depth-1)*ROW_H;
     if(px+pw<0||px>cW||pw<0.5)continue;
     const n=r.node,sp=n.self/totalSamples,tp=n.value/totalSamples;
-    const dim=hasFilt&&n.name.toLowerCase().indexOf(filt)===-1;
+    const matches=!hasFilt||n.name.toLowerCase().indexOf(filt)!==-1||(n.file&&n.file.toLowerCase().indexOf(filt)!==-1);
+    if(hasFilt&&matches)matchedSamples+=n.self;
+    const dim=(hasFilt&&!matches)||(hasHL&&n.name!==highlightName);
     const drawX=px<0?0:px+.5,drawW=px<0?pw+px:Math.min(pw,cW-px);
     ctx.fillStyle=dim?"rgba(30,33,45,0.8)":heatC(sp,tp);
     ctx.fillRect(drawX,py+.5,Math.max(drawW-1,1),ROW_H-1);
+    if(hasHL&&n.name===highlightName){
+      ctx.strokeStyle="rgba(108,140,255,0.9)";ctx.lineWidth=1.5;
+      ctx.strokeRect(drawX+1,py+1,Math.max(drawW-3,1),ROW_H-3);
+    }
     if(pw>35&&!dim){
       const label=truncFast(n.name,pw-8);
       if(label){
@@ -361,12 +525,140 @@ function renderFlameImmediate(){
     }
   }
   const zp=Math.round(vpZoom*100);
-  $.flameInfo.textContent=fmtTime(totalSamples)+" \u00b7 "+processedFrames.length+" frames"+(vpZoom>1.01?" \u00b7 "+zp+"%":"");
+  let info=fmtTime(totalSamples)+" \u00b7 "+processedFrames.length+" frames";
+  if(hasFilt)info+=" \u00b7 matched: "+((matchedSamples/totalSamples)*100).toFixed(1)+"%";
+  if(vpZoom>1.01)info+=" \u00b7 "+zp+"%";
+  $.flameInfo.textContent=info;
 }
 function heatC(s,t){return s>.15?"#e84040":s>.08?"#e86840":s>.03?"#d88840":s>.01?"#b89848":t>.3?"#5878a8":t>.1?"#486898":"#3a5080"}
 
+// --- Timeline rendering ---
+function renderTimelineImmediate(){
+  const container=$.flameContainer,canvas=$.flameCanvas,ctx=canvas.getContext("2d"),dpr=devicePixelRatio||1;
+  const cW=container.clientWidth,cH=container.clientHeight;
+  const nSamples=tlSamples.length;
+  if(!nSamples){ctx.fillStyle="#0c0e14";ctx.fillRect(0,0,cW,cH);return}
+
+  const ch=Math.max((tlMaxDepth+1)*ROW_H,cH);
+  const needW=Math.round(cW*dpr),needH=Math.round(ch*dpr);
+  if(canvas.width!==needW||canvas.height!==needH){canvas.width=needW;canvas.height=needH;canvas.style.width=cW+"px";canvas.style.height=ch+"px"}
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle="#0c0e14";ctx.fillRect(0,0,cW,ch);
+
+  const logW=cW*vpZoom;
+  const colW=logW/nSamples;
+  const filt=searchTerm.toLowerCase(),hasFilt=filt.length>0;
+  ctx.font=FONT_SZ+"px JetBrains Mono,monospace";
+  ctx.textBaseline="alphabetic";
+
+  const startIdx=Math.max(0,Math.floor(-vpPanX/colW));
+  const endIdx=Math.min(nSamples,Math.ceil((cW-vpPanX)/colW));
+
+  let matchedCount=0;
+  for(let si=startIdx;si<endIdx;si++){
+    const stk=tlSamples[si];
+    const px=si*colW+vpPanX;
+    const pw=colW;
+    if(pw<0.3)continue;
+    for(let d=0;d<stk.length;d++){
+      const fr=stk[d];
+      const py=d*ROW_H;
+      const matches=!hasFilt||fr.name.toLowerCase().indexOf(filt)!==-1||(fr.file&&fr.file.toLowerCase().indexOf(filt)!==-1);
+      if(hasFilt&&matches&&d===stk.length-1)matchedCount++;
+      ctx.fillStyle=(hasFilt&&!matches)?"rgba(30,33,45,0.8)":nameColor(fr.name);
+      ctx.fillRect(px+.5,py+.5,Math.max(pw-1,0.5),ROW_H-1);
+      if(pw>50){
+        const label=truncFast(fr.name,pw-6);
+        if(label){ctx.fillStyle="#e2e6f0";ctx.fillText(label,px+3,py+14)}
+      }
+    }
+  }
+
+  let info="Timeline \u00b7 "+nSamples+" samples \u00b7 depth "+tlMaxDepth;
+  if(hasFilt)info+=" \u00b7 matched: "+((matchedCount/nSamples)*100).toFixed(1)+"%";
+  if(vpZoom>1.01)info+=" \u00b7 "+Math.round(vpZoom*100)+"%";
+  $.flameInfo.textContent=info;
+}
+
+// --- Swimlane rendering ---
+function renderSwimlanesImmediate(){
+  const container=$.flameContainer,canvas=$.flameCanvas,ctx=canvas.getContext("2d"),dpr=devicePixelRatio||1;
+  const cW=container.clientWidth,cH=container.clientHeight;
+  const nSamples=tlSamples.length,nLanes=taskLanes.length;
+  if(!nSamples||!nLanes){ctx.fillStyle="#0c0e14";ctx.fillRect(0,0,cW,cH);return}
+
+  const laneFullH=LANE_H+LANE_GAP;
+  const labelW=150;
+  const ch=Math.max(nLanes*laneFullH+LANE_H,cH);
+  const needW=Math.round(cW*dpr),needH=Math.round(ch*dpr);
+  if(canvas.width!==needW||canvas.height!==needH){canvas.width=needW;canvas.height=needH;canvas.style.width=cW+"px";canvas.style.height=ch+"px"}
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle="#0c0e14";ctx.fillRect(0,0,cW,ch);
+
+  const chartW=cW-labelW;
+  const logW=chartW*vpZoom;
+  const colW=logW/nSamples;
+  const filt=searchTerm.toLowerCase(),hasFilt=filt.length>0;
+  ctx.font=FONT_SZ+"px JetBrains Mono,monospace";
+  ctx.textBaseline="alphabetic";
+
+  // Draw lanes
+  for(let li=0;li<nLanes;li++){
+    const lane=taskLanes[li];
+    const ly=li*laneFullH;
+    const matches=!hasFilt||lane.name.toLowerCase().indexOf(filt)!==-1||(lane.samples.length>0&&lane.samples[0].stack.some(f=>f.file&&f.file.toLowerCase().indexOf(filt)!==-1));
+
+    // Lane background stripe
+    if(li%2===1)ctx.fillStyle="rgba(255,255,255,0.015)";
+    else ctx.fillStyle="rgba(0,0,0,0)";
+    if(li%2===1)ctx.fillRect(0,ly,cW,LANE_H);
+
+    // Lane label
+    ctx.fillStyle=(hasFilt&&!matches)?"rgba(88,94,116,0.4)":"#8890a8";
+    const labelText=truncFast(lane.name,labelW-24);
+    if(labelText)ctx.fillText(labelText,12,ly+15);
+
+    // Draw sample markers for this lane (with viewport culling)
+    const col=(hasFilt&&!matches)?"rgba(30,33,45,0.8)":nameColor(lane.name);
+    ctx.fillStyle=col;
+
+    const visStart=Math.floor(-vpPanX/colW);
+    const visEnd=Math.ceil((chartW-vpPanX)/colW);
+    for(let i=0;i<lane.samples.length;i++){
+      const si=lane.samples[i].si;
+      if(si<visStart)continue;
+      if(si>visEnd)break;
+      const px=labelW+si*colW+vpPanX;
+      const pw=Math.max(colW,1);
+      const drawX=Math.max(px,labelW);
+      const drawW=Math.min(px+pw,cW)-drawX;
+      if(drawW<0.3)continue;
+      ctx.fillRect(drawX,ly+2,drawW,LANE_H-4);
+    }
+  }
+
+  // Separator line between labels and chart
+  ctx.strokeStyle="rgba(42,47,64,0.8)";ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(labelW,0);ctx.lineTo(labelW,ch);ctx.stroke();
+
+  // Lane separators
+  ctx.strokeStyle="rgba(42,47,64,0.4)";
+  for(let li=1;li<nLanes;li++){
+    const ly=li*laneFullH-LANE_GAP/2;
+    ctx.beginPath();ctx.moveTo(0,ly);ctx.lineTo(cW,ly);ctx.stroke();
+  }
+
+  let info="Tasks \u00b7 "+nLanes+" lanes \u00b7 "+nSamples+" samples";
+  if(vpZoom>1.01)info+=" \u00b7 "+Math.round(vpZoom*100)+"%";
+  $.flameInfo.textContent=info;
+}
+
 // --- Hit test ---
 function hit(mx,my){
+  if(viewMode==="timeline"){
+    if(swimlaneMode)return hitSwimlane(mx,my);
+    return hitTimeline(mx,my);
+  }
   if(!cachedRects)return null;
   const logW=$.flameContainer.clientWidth*vpZoom;
   for(let i=0,len=cachedRects.length;i<len;i++){
@@ -378,10 +670,51 @@ function hit(mx,my){
   return null;
 }
 
+function hitTimeline(mx,my){
+  const nSamples=tlSamples.length;if(!nSamples)return null;
+  const cW=$.flameContainer.clientWidth;
+  const logW=cW*vpZoom,colW=logW/nSamples;
+  const si=Math.floor((mx-vpPanX)/colW);
+  if(si<0||si>=nSamples)return null;
+  const d=Math.floor(my/ROW_H);
+  const stk=tlSamples[si];
+  if(d<0||d>=stk.length)return null;
+  const fr=stk[d];
+  return{node:{name:fr.name,file:fr.file,line:fr.line,self:0,value:0,children:[]},sampleIdx:si,depth:d,timeline:true};
+}
+
+function hitSwimlane(mx,my){
+  const nSamples=tlSamples.length,nLanes=taskLanes.length;
+  if(!nSamples||!nLanes)return null;
+  const labelW=150;
+  const laneFullH=LANE_H+LANE_GAP;
+  const li=Math.floor(my/laneFullH);
+  if(li<0||li>=nLanes)return null;
+  const lane=taskLanes[li];
+  if(mx<labelW){
+    // Clicked on the label area
+    return{node:{name:lane.name,file:"",line:0,self:0,value:0,children:[]},timeline:true,swimlane:true,laneIdx:li,sampleIdx:-1,depth:0};
+  }
+  const cW=$.flameContainer.clientWidth,chartW=cW-labelW;
+  const logW=chartW*vpZoom,colW=logW/nSamples;
+  const si=Math.floor((mx-labelW-vpPanX)/colW);
+  if(si<0||si>=nSamples)return null;
+  // Binary search for sample index in this lane (samples are sorted by si)
+  const arr=lane.samples;
+  let lo=0,hi=arr.length-1,match=null;
+  while(lo<=hi){const mid=(lo+hi)>>1;if(arr[mid].si===si){match=arr[mid];break}else if(arr[mid].si<si)lo=mid+1;else hi=mid-1}
+  if(!match)return null;
+  const stk=match.stack;
+  const leaf=stk.length?stk[stk.length-1]:null;
+  if(!leaf)return null;
+  return{node:{name:leaf.name,file:leaf.file,line:leaf.line,self:0,value:0,children:[]},timeline:true,swimlane:true,laneIdx:li,sampleIdx:si,depth:0};
+}
+
 function clampPan(cW){
-  const logW=cW*vpZoom;
+  const effW=(viewMode==="timeline"&&swimlaneMode)?cW-150:cW;
+  const logW=effW*vpZoom;
   if(vpPanX>0)vpPanX=0;
-  if(vpPanX<cW-logW)vpPanX=cW-logW;
+  if(vpPanX<effW-logW)vpPanX=effW-logW;
   if(vpZoom<=1){vpPanX=0;vpZoom=1}
 }
 
@@ -389,57 +722,100 @@ function clampPan(cW){
 function setupFlame(){
   const canvas=$.flameCanvas,tt=$.tooltip,container=$.flameContainer;
 
-  // Wheel/pinch zoom
   container.addEventListener("wheel",e=>{
-    e.preventDefault();
     const rect=container.getBoundingClientRect(),mx=e.clientX-rect.left;
-    if(e.ctrlKey||Math.abs(e.deltaX)<Math.abs(e.deltaY)){
-      const delta=e.ctrlKey?-e.deltaY*0.02:-e.deltaY*0.005;
+    const isZoom=e.ctrlKey||e.metaKey;
+    const isHorizontal=Math.abs(e.deltaX)>Math.abs(e.deltaY);
+
+    // Allow native vertical scroll when not zooming and not panning horizontally
+    if(!isZoom&&!isHorizontal&&vpZoom<=1.01){return}
+
+    e.preventDefault();
+    if(isZoom){
+      const delta=-e.deltaY*0.02;
       const oldZ=vpZoom;vpZoom=Math.max(1,Math.min(vpZoom*Math.exp(delta),200));
-      vpPanX=mx-(mx-vpPanX)/oldZ*vpZoom;
-    }else{vpPanX-=e.deltaX}
+      const focalX=(viewMode==="timeline"&&swimlaneMode)?mx-150:mx;
+      vpPanX=focalX-(focalX-vpPanX)/oldZ*vpZoom;
+    }else if(isHorizontal){
+      vpPanX-=e.deltaX;
+    }else{
+      // Vertical scroll when zoomed = horizontal pan
+      const delta=-e.deltaY*0.005;
+      const oldZ=vpZoom;vpZoom=Math.max(1,Math.min(vpZoom*Math.exp(delta),200));
+      const focalX=(viewMode==="timeline"&&swimlaneMode)?mx-150:mx;
+      vpPanX=focalX-(focalX-vpPanX)/oldZ*vpZoom;
+    }
     clampPan(container.clientWidth);renderFlame();
   },{passive:false});
 
-  // Drag to pan
   let dragging=false,dragSX=0,dragSP=0;
-  container.addEventListener("mousedown",e=>{if(e.button!==0||vpZoom<=1.01)return;dragging=true;dragSX=e.clientX;dragSP=vpPanX;container.style.cursor="grabbing";e.preventDefault()});
+  container.addEventListener("mousedown",e=>{
+    if(e.button!==0||vpZoom<=1.01)return;
+    // In swimlane mode, don't initiate drag from the label area
+    if(viewMode==="timeline"&&swimlaneMode){const rect=container.getBoundingClientRect();if(e.clientX-rect.left<150)return}
+    dragging=true;dragSX=e.clientX;dragSP=vpPanX;container.style.cursor="grabbing";e.preventDefault();
+  });
   document.addEventListener("mousemove",e=>{if(!dragging)return;vpPanX=dragSP+(e.clientX-dragSX);clampPan(container.clientWidth);renderFlame()});
   document.addEventListener("mouseup",()=>{if(dragging){dragging=false;container.style.cursor=""}});
 
-  // Tooltip
   canvas.addEventListener("mousemove",e=>{
     if(dragging)return;
     const rect=canvas.getBoundingClientRect(),h=hit(e.clientX-rect.left,e.clientY-rect.top);
     if(h){
-      const n=h.node,vr=flameViewRoot||flameRoot;
+      const n=h.node;
       $.ttName.textContent=n.name;
       $.ttFile.textContent=n.file?shortPath(n.file)+":"+n.line:"";
-      $.ttTime.textContent="self: "+((n.self/totalSamples)*100).toFixed(1)+"% ("+fmtTime(n.self)+") \u00b7 total: "+((n.value/totalSamples)*100).toFixed(1)+"% ("+fmtTime(n.value)+")"+(flameZoomStack.length?" \u00b7 local: "+((n.value/vr.value)*100).toFixed(1)+"%":"");
-      $.ttHint.textContent=n.children.length?"Click=zoom \u00b7 Right-click=source \u00b7 Scroll/pinch=zoom \u00b7 Drag=pan":"Click=source";
+      if(h.timeline&&h.swimlane){
+        const lane=taskLanes[h.laneIdx];
+        const pct=((lane.samples.length/tlSamples.length)*100).toFixed(1);
+        $.ttName.textContent=h.sampleIdx>=0?n.name:lane.name;
+        $.ttTime.textContent="Task: "+lane.name+" \u00b7 "+lane.samples.length+" samples ("+pct+"% CPU)";
+        $.ttHint.textContent=h.sampleIdx>=0&&n.file?"Click=open source":"Scroll/pinch=zoom \u00b7 Drag=pan";
+      }else if(h.timeline){
+        $.ttTime.textContent="Sample #"+h.sampleIdx+" \u00b7 depth "+h.depth;
+        $.ttHint.textContent="Click=open source \u00b7 Scroll/pinch=zoom \u00b7 Drag=pan";
+      }else{
+        const vr=flameViewRoot||flameRoot;
+        $.ttTime.textContent="self: "+((n.self/totalSamples)*100).toFixed(1)+"% ("+fmtTime(n.self)+") \u00b7 total: "+((n.value/totalSamples)*100).toFixed(1)+"% ("+fmtTime(n.value)+")"+(flameZoomStack.length?" \u00b7 local: "+((n.value/vr.value)*100).toFixed(1)+"%":"");
+        $.ttHint.textContent=n.children.length?"Click=zoom \u00b7 Right-click=source \u00b7 Scroll/pinch=zoom \u00b7 Drag=pan":"Click=source";
+      }
       tt.style.display="block";tt.style.left=(e.clientX+12)+"px";tt.style.top=(e.clientY-10)+"px";
       const tr=tt.getBoundingClientRect();
       if(tr.right>innerWidth)tt.style.left=(e.clientX-tr.width-12)+"px";
       if(tr.bottom>innerHeight)tt.style.top=(e.clientY-tr.height-10)+"px";
       canvas.style.cursor="pointer";
-    }else{tt.style.display="none";canvas.style.cursor=vpZoom>1.01?"grab":"default"}
+      highlightTableRow(n.name);
+    }else{tt.style.display="none";canvas.style.cursor=vpZoom>1.01?"grab":"default";highlightTableRow("")}
   });
-  canvas.addEventListener("mouseleave",()=>{tt.style.display="none"});
+  canvas.addEventListener("mouseleave",()=>{tt.style.display="none";highlightTableRow("")});
 
-  // Click (ignore drags)
   let clkSX=0,clkSY=0;
   canvas.addEventListener("mousedown",e=>{clkSX=e.clientX;clkSY=e.clientY});
   canvas.addEventListener("click",e=>{
     if(Math.abs(e.clientX-clkSX)>4||Math.abs(e.clientY-clkSY)>4)return;
     const rect=canvas.getBoundingClientRect(),h2=hit(e.clientX-rect.left,e.clientY-rect.top);
     if(!h2)return;
-    if(h2.node.children.length)zoomInto(h2.node);else if(h2.node.file)openSource(h2.node.file,h2.node.line);
+    if(h2.timeline){if(h2.node.file)openSource(h2.node.file,h2.node.line)}
+    else if(h2.node.children.length)zoomInto(h2.node);
+    else if(h2.node.file)openSource(h2.node.file,h2.node.line);
   });
   canvas.addEventListener("contextmenu",e=>{
     const rect=canvas.getBoundingClientRect(),h2=hit(e.clientX-rect.left,e.clientY-rect.top);
     if(h2&&h2.node.file){e.preventDefault();openSource(h2.node.file,h2.node.line)}
   });
-  canvas.addEventListener("dblclick",e=>{e.preventDefault();if(flameZoomStack.length)zoomTo(flameZoomStack.length-2)});
+  canvas.addEventListener("dblclick",e=>{e.preventDefault();if(viewMode!=="timeline"&&flameZoomStack.length)zoomTo(flameZoomStack.length-2)});
+}
+
+// --- Cross-highlight: flame → table ---
+let lastHLRow=null;
+function highlightTableRow(name){
+  if(lastHLRow){lastHLRow.classList.remove("hl");lastHLRow=null}
+  if(!name)return;
+  const rows=$.tableBody.querySelectorAll("tr");
+  for(const row of rows){
+    const cell=row.querySelector(".col-name");
+    if(cell&&cell.textContent===name){row.classList.add("hl");lastHLRow=row;break}
+  }
 }
 
 // --- Function table ---
@@ -467,17 +843,89 @@ function setupTable(){
     });
   });
   $.tableBody.addEventListener("click",e=>{const tr=e.target.closest("tr");if(tr&&tr.dataset.file)openSource(tr.dataset.file,+(tr.dataset.line)||0)});
+  $.tableBody.addEventListener("mouseover",e=>{
+    const tr=e.target.closest("tr");if(!tr)return;
+    const name=tr.querySelector(".col-name")?.textContent||"";
+    if(name&&name!==highlightName){highlightName=name;renderFlame()}
+  });
+  $.tableBody.addEventListener("mouseleave",()=>{if(highlightName){highlightName="";renderFlame()}});
   $.tableSearch.addEventListener("input",renderTable);
   document.getElementById("flame-search").addEventListener("input",e=>{searchTerm=e.target.value;renderFlame()});
 }
-function setupInternals(){
+
+// --- View mode toggles ---
+function setupViewToggles(){
   $.toggleBtn.addEventListener("click",()=>{
     hideInternals=!hideInternals;$.toggleBtn.textContent=hideInternals?"Hide internals":"Show internals";
     $.toggleBtn.classList.toggle("active",hideInternals);processProfile();resetZoom();renderAll();
   });
+  $.toggleView.addEventListener("click",()=>{
+    if(viewMode==="timeline"){viewMode="flame";$.toggleView.textContent="Timeline";$.toggleView.classList.remove("active");swimlaneMode=false;$.toggleSwimlane.classList.remove("active")}
+    else{viewMode="timeline";$.toggleView.textContent="Flame Graph";$.toggleView.classList.add("active")}
+    $.flameTab.textContent=viewMode==="timeline"?(swimlaneMode?"Tasks":"Timeline"):"Flame Graph";
+    $.toggleInverted.style.display=viewMode==="timeline"?"none":"";
+    $.toggleSwimlane.style.display=viewMode==="timeline"?"":"none";
+    vpZoom=1;vpPanX=0;cachedRects=null;renderFlame();
+  });
+  $.toggleSwimlane.addEventListener("click",()=>{
+    swimlaneMode=!swimlaneMode;
+    $.toggleSwimlane.classList.toggle("active",swimlaneMode);
+    $.flameTab.textContent=swimlaneMode?"Tasks":"Timeline";
+    vpZoom=1;vpPanX=0;renderFlame();
+  });
+  $.toggleInverted.addEventListener("click",()=>{
+    const prof=profileData.profiles[currentProfileIndex],sf=profileData.shared?.frames||[],
+      samples=prof.samples||[],weights=prof.weights||samples.map(()=>1);
+    if(viewMode==="inverted"){
+      viewMode="flame";$.toggleInverted.classList.remove("active");
+      flameRoot=buildTree(samples,weights,sf);
+      $.flameTab.textContent="Flame Graph";
+    }else{
+      viewMode="inverted";$.toggleInverted.classList.add("active");
+      flameRoot=buildInvertedTree(samples,weights,sf);
+      $.flameTab.textContent="Flame Graph (Bottom-up)";
+    }
+    resetZoom();cachedRects=null;renderFlame();
+  });
 }
 
-// --- Source viewer ---
+// --- Source viewer with syntax highlighting ---
+const PY_KEYWORDS=new Set(["def","class","return","if","elif","else","for","while","import","from",
+  "as","with","try","except","finally","raise","yield","async","await","pass","break","continue",
+  "and","or","not","in","is","None","True","False","lambda","global","nonlocal","del","assert"]);
+
+function highlightPython(line){
+  let out="",i=0;const len=line.length;
+  while(i<len){
+    if(line[i]==="#"){out+='<span style="color:var(--text-muted);font-style:italic">'+esc(line.slice(i))+"</span>";break}
+    if(line[i]==='"'||line[i]==="'"){
+      const q=line[i];let j=i+1;
+      const triple=line.slice(i,i+3)===q+q+q;
+      if(triple){j=i+3;while(j<len&&line.slice(j,j+3)!==q+q+q)j++;j+=3}
+      else{while(j<len&&line[j]!==q){if(line[j]==="\\")j++;j++}j++}
+      out+='<span style="color:#98c379">'+esc(line.slice(i,j))+"</span>";i=j;continue;
+    }
+    if(/[a-zA-Z_]/.test(line[i])){
+      let j=i;while(j<len&&/[a-zA-Z0-9_]/.test(line[j]))j++;
+      const word=line.slice(i,j);
+      if(PY_KEYWORDS.has(word))out+='<span style="color:#c678dd">'+word+"</span>";
+      else if(j<len&&line[j]==="(")out+='<span style="color:#61afef">'+esc(word)+"</span>";
+      else out+=esc(word);
+      i=j;continue;
+    }
+    if(/[0-9]/.test(line[i])){
+      let j=i;while(j<len&&/[0-9.xXa-fA-F_eE+-]/.test(line[j]))j++;
+      out+='<span style="color:#d19a66">'+esc(line.slice(i,j))+"</span>";i=j;continue;
+    }
+    if(line[i]==="@"&&(i===0||/\s/.test(line[i-1]))){
+      let j=i+1;while(j<len&&/[a-zA-Z0-9_.]/.test(line[j]))j++;
+      out+='<span style="color:#e5c07b">'+esc(line.slice(i,j))+"</span>";i=j;continue;
+    }
+    out+=esc(line[i]);i++;
+  }
+  return out;
+}
+
 async function openSource(fp,line){
   $.sourcePanel.classList.add("visible");$.vSplitter.classList.add("visible");
   $.sourceFilePath.textContent=shortPath(fp);$.sourceFilePath.title=fp;
@@ -487,10 +935,12 @@ async function openSource(fp,line){
     if(data.error){$.sourceCode.innerHTML='<div style="padding:20px;color:var(--hot)">'+esc(data.error)+'</div>';return}
     const lh={};for(const f of processedFrames)if(f.file===fp&&f.line>0)lh[f.line]=(lh[f.line]||0)+f.self;
     const lines=data.content.split("\n"),sl=data.start_line||1,parts=new Array(lines.length);
+    const isPython=fp.endsWith(".py")||fp.endsWith(".pyx");
     for(let i=0;i<lines.length;i++){
       const ln=sl+i,heat=lh[ln]||0,hp=heat/totalSamples*100;
       let cls="source-line";if(ln===line)cls+=" highlighted";if(hp>1)cls+=" hot";
-      parts[i]='<div class="'+cls+'"><span class="line-no">'+ln+'</span><span class="line-heat">'+(heat>0?hp.toFixed(1)+"% ("+fmtTime(heat)+")":"")+'</span><span class="line-content">'+esc(lines[i])+'</span></div>';
+      const content=isPython?highlightPython(lines[i]):esc(lines[i]);
+      parts[i]='<div class="'+cls+'"><span class="line-no">'+ln+'</span><span class="line-heat">'+(heat>0?hp.toFixed(1)+"% ("+fmtTime(heat)+")":"")+'</span><span class="line-content">'+content+'</span></div>';
     }
     $.sourceCode.innerHTML=parts.join("");
     requestAnimationFrame(()=>{const t=$.sourceCode.querySelector(".highlighted");if(t)t.scrollIntoView({block:"center",behavior:"smooth"})});
@@ -499,7 +949,10 @@ async function openSource(fp,line){
 }
 function setupSource(){
   document.getElementById("source-close").addEventListener("click",()=>{
-    $.sourcePanel.classList.remove("visible");$.vSplitter.classList.remove("visible");setTimeout(renderFlame,50);
+    $.sourcePanel.classList.remove("visible");$.vSplitter.classList.remove("visible");
+    $.leftPanels.style.flex="";$.leftPanels.style.width="";
+    $.sourcePanel.style.width="";
+    setTimeout(renderFlame,50);
   });
 }
 
@@ -521,7 +974,7 @@ function setupSplitters(){
 // --- Keyboard ---
 document.addEventListener("keydown",e=>{
   if(e.key==="Escape"){
-    if($.sourcePanel.classList.contains("visible")){$.sourcePanel.classList.remove("visible");$.vSplitter.classList.remove("visible");setTimeout(renderFlame,50)}
+    if($.sourcePanel.classList.contains("visible")){$.sourcePanel.classList.remove("visible");$.vSplitter.classList.remove("visible");$.leftPanels.style.flex="";$.leftPanels.style.width="";$.sourcePanel.style.width="";setTimeout(renderFlame,50)}
     else if(flameZoomStack.length){resetZoom();renderFlame()}
   }
   if(e.key==="Backspace"&&!e.target.matches("input,textarea")&&flameZoomStack.length)zoomTo(flameZoomStack.length-2);
@@ -529,7 +982,7 @@ document.addEventListener("keydown",e=>{
 let resizeT;window.addEventListener("resize",()=>{clearTimeout(resizeT);resizeT=setTimeout(()=>{if(flameRoot)renderFlame()},150)});
 
 // --- Boot ---
-document.addEventListener("DOMContentLoaded",()=>{initDomCache();setupFlame();setupTable();setupSource();setupSplitters();setupInternals();loadData()});
+document.addEventListener("DOMContentLoaded",()=>{initDomCache();setupFlame();setupTable();setupSource();setupSplitters();setupViewToggles();loadData()});
 })();
 </script>
 </body>

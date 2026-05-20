@@ -85,7 +85,7 @@ On macOS, py-spy works without special permissions.
 
 ## Privacy
 
-Everything runs locally. The web UI is served from `127.0.0.1` with no external requests (fonts are loaded from Google Fonts CDN for aesthetics — remove the `@import` in the HTML if you want zero external calls). Profile data, source code, and all analysis stay on your machine.
+Everything runs locally. The web UI is served from `127.0.0.1` with no external requests — all fonts are system fonts. Profile data, source code, and all analysis stay on your machine.
 
 ## How It Works
 
