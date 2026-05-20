@@ -63,6 +63,14 @@ Opens an interactive web UI at `http://127.0.0.1:8125` with:
 - `--host HOST` — Host to bind to (default: 127.0.0.1)
 - `--dir PATH` — Base directory containing the `codexplorer/` folder
 
+#### Async task detection
+
+The **Tasks** swimlane view groups samples by async task. Since py-spy samples OS-thread
+stacks (not asyncio internals), task identity is inferred heuristically: the viewer looks
+for `Task.__step` in the call stack and uses the coroutine immediately above it as the
+task name. Two `Task` instances running the same coroutine will appear as one lane.
+Synchronous code falls back to the deepest user-code frame.
+
 ### List runs
 
 ```bash
